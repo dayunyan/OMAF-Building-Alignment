@@ -14,7 +14,7 @@ from tools.cfg import py2cfg
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
-from train_supervision import *
+from train_emd import *
 import random
 import os
 

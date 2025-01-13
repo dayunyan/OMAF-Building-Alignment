@@ -4,7 +4,7 @@ from torch import nn, Tensor
 import torch.nn.functional as F
 
 
-def tensor2pointcloud(im: Tensor, norm=True):
+def tensor2pointcloud(im: Tensor, patch_size, norm=True, scale_factor=0.5):
     if im.ndim == 4:
         im = im.argmax(dim=1, keepdim=True)
     if im.ndim == 3:
@@ -13,24 +13,62 @@ def tensor2pointcloud(im: Tensor, norm=True):
     assert im.ndim == 4, NotImplementedError("ndim of the input must be 4")
 
     im = F.interpolate(
-        im.to(dtype=torch.float32), scale_factor=0.125, mode="nearest"
+        im.to(dtype=torch.float32), scale_factor=scale_factor, mode="nearest"
     ).squeeze(
         1
     )  # avoid OOM ERROR
-
-    # TODO multi-class, multi-channel
+    batch_size, height, width = im.shape
 
     signature = []
-    num_points_list = []  # 新增，用于记录每个样本每个类别的点数
-    for i in range(im.shape[0]):
-        coords = torch.nonzero(im[i] == 1).to(dtype=torch.float32)
-        num_points = coords.shape[0]  # 获取当前样本对应的点数
-        if norm:
-            coords -= coords.mean(dim=0, keepdim=True)
-        signature.append(coords)
-        num_points_list.append(num_points)
+    num_points_list = []  # 新增，用于记录每个样本的点数
+    for b in range(batch_size):
+        for h in range(0, height, patch_size[0]):
+            for w in range(0, width, patch_size[1]):
+                patch = im[b, h : h + patch_size[0], w : w + patch_size[1]]
+                coords = torch.nonzero(patch == 1).to(dtype=torch.float32)
+                num_points = coords.shape[0]  # 获取当前样本对应的点数
+                if norm:
+                    coords -= coords.mean(dim=0, keepdim=True)
+                    coords /= (
+                        torch.tensor([patch_size[0], patch_size[1]])
+                        .view(1, 2)
+                        .to(im.device)
+                        / 2
+                    )
+                signature.append(coords)
+                num_points_list.append(num_points)
 
     return signature, num_points_list
+
+
+def split_and_convert(im: torch.Tensor, patch_size, norm=True, scale_factor=0.5):
+    """
+    将输入的语义标签张量切割成多个小块，并将每个小块作为单独的样本转成点云结构。
+
+    参数:
+    - im: 输入的语义标签张量，形状为 (batch_size, channels, height, width)，一般channels为1
+    - patch_size: 切割的小块尺寸，例如 (patch_h, patch_w)
+    - norm: 是否进行归一化，默认为True
+    - scale_factor: 下采样的比例因子，默认为0.5
+
+    返回:
+    - all_signatures: 包含所有小块样本点云结构的列表，每个元素对应一个小块样本的坐标信息
+    - all_num_points_lists: 包含所有小块样本点数的列表，每个元素对应一个小块样本的点数
+    """
+    assert im.ndim == 4, "输入张量的维度必须为4"
+    batch_size, _, height, width = im.shape
+    all_signatures = []
+    all_num_points_lists = []
+    for b in range(batch_size):
+        for h in range(0, height, patch_size[0]):
+            for w in range(0, width, patch_size[1]):
+                patch = im[b : b + 1, :, h : h + patch_size[0], w : w + patch_size[1]]
+                patch_signature, patch_num_points_list = tensor2pointcloud(
+                    patch, norm=norm, scale_factor=scale_factor
+                )
+                all_signatures.extend(patch_signature)
+                all_num_points_lists.extend(patch_num_points_list)
+    return all_signatures, all_num_points_lists
 
 
 def group_samples_by_num_points(num_points_list, intervals: List[tuple]):
@@ -85,15 +123,27 @@ def unpad_loss(group_loss, logit_mask, target_mask):
 def diff_num_emdloss(
     logits: Tensor,
     targets: Tensor,
+    scale_factor=0.5,
     eps=0.01,
     max_iter=100,
     reduction="none",
 ):
     batchsize = logits.shape[0]
-    logit_sig, logit_num_points = tensor2pointcloud(logits, norm=True)
-    target_sig, target_num_points = tensor2pointcloud(targets, norm=True)
+    logit_sig, logit_num_points = tensor2pointcloud(
+        logits, patch_size=(128, 128), norm=True, scale_factor=scale_factor
+    )
+    target_sig, target_num_points = tensor2pointcloud(
+        targets, patch_size=(128, 128), norm=True, scale_factor=scale_factor
+    )
 
     # 设定点数区间
+    # inter_ends = [_ * scale_factor for _ in [0, 64, 128, 256, 512]]
+    # intervals = [
+    #     (st**2 + 1, ed**2)
+    #     for st, ed in zip(
+    #         inter_ends[: len(inter_ends) - 1], inter_ends[1 : len(inter_ends)]
+    #     )
+    # ]
     # intervals = [
     #     (1, 64 * 64),
     #     (64 * 64 + 1, 128 * 128),
@@ -157,7 +207,7 @@ class EMDLoss(nn.Module):
         self.reduction = reduction
 
     def forward(self, x: Tensor, y: Tensor):
-        print(f"x shape: {x.shape}, y shape: {y.shape}")
+        # print(f"x shape: {x.shape}, y shape: {y.shape}")
         # The Sinkhorn algorithm takes as input three variables :
         C = self._cost_matrix(x, y).to(x.device)  # Wasserstein cost function
         x_points = x.shape[-2]
@@ -180,8 +230,8 @@ class EMDLoss(nn.Module):
             .squeeze()
             .to(x.device)
         )
-        print(f"mu tensor dimensions: {mu.dim()}")
-        print(f"nu tensor dimensions: {nu.dim()}")
+        # print(f"mu tensor dimensions: {mu.dim()}")
+        # print(f"nu tensor dimensions: {nu.dim()}")
 
         u = torch.zeros_like(mu)
         v = torch.zeros_like(nu)
@@ -219,7 +269,7 @@ class EMDLoss(nn.Module):
         # Sinkhorn distance
         # cost = torch.sum(pi * C, dim=(-2, -1))
         cost = pi * C
-        print(f"cost shape: {cost.shape}")
+        # print(f"cost shape: {cost.shape}")
 
         if self.reduction == "mean":
             cost = torch.sum(cost, dim=(-2, -1))
@@ -246,3 +296,59 @@ class EMDLoss(nn.Module):
     def ave(u, u1, tau):
         "Barycenter subroutine, used by kinetic acceleration through extrapolation."
         return tau * u + (1 - tau) * u1
+
+
+if __name__ == "__main__":
+    import cv2
+    import numpy as np
+
+    img_only_xbd = (
+        cv2.cvtColor(
+            cv2.imread(
+                "../../fig_results/xbd_teq/unetformer/logits_vis/10240_9216.png"
+            ),
+            cv2.COLOR_BGR2GRAY,
+        ).astype(np.float32)
+        / 255.0
+    )
+    img_emd = (
+        cv2.cvtColor(
+            cv2.imread("../../fig_results/xbd_teq/emd/logits_vis/10240_9216.png"),
+            cv2.COLOR_BGR2GRAY,
+        ).astype(np.float32)
+        / 255.0
+    )
+    img_label = (
+        cv2.cvtColor(
+            cv2.imread(
+                "/workspace/zjj/xjd/data/segmentation/Turkey/Islahiye/pre/test/labels/10240_9216.png"
+            ),
+            cv2.COLOR_BGR2GRAY,
+        ).astype(np.float32)
+        / 255.0
+    )
+
+    print(
+        f"img_only_xbd: {img_only_xbd.shape}, img_emd:{img_emd.shape}, img_label:{img_label.shape}"
+    )
+
+    tensor_only_xbd = (
+        torch.tensor(img_only_xbd, dtype=torch.float32).unsqueeze(0).to(device="cuda:1")
+    )
+    tensor_emd = (
+        torch.tensor(img_emd, dtype=torch.float32).unsqueeze(0).to(device="cuda:1")
+    )
+    tensor_label = (
+        torch.tensor(img_label, dtype=torch.float32).unsqueeze(0).to(device="cuda:1")
+    )
+    print(
+        f"tensor_only_xbd: {tensor_only_xbd.shape}, tensor_emd:{tensor_emd.shape}, tensor_label:{tensor_label.shape}"
+    )
+    pc_only_xbd = tensor2pointcloud(tensor_only_xbd)[0]
+    pc_emd = tensor2pointcloud(tensor_emd)[0]
+    pc_label = tensor2pointcloud(tensor_label)[0]
+
+    EMD = EMDLoss(eps=0.001, max_iter=500, reduction="none")
+    cost, pi, C = EMD(pc_emd[0], pc_label[0])
+    print(f"EMD cost: {cost}, pi: {pi}, C: {C}")
+    print(f"Sum cost: {torch.sum(cost)}")
