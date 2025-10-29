@@ -166,3 +166,5 @@ pretrained_weights/
 model_weights/
 fig_results/
 lightning_logs/
+DEBUG/
+vis_logs/

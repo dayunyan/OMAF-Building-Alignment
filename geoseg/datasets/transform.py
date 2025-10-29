@@ -11,11 +11,11 @@ class Compose(object):
     def __init__(self, transforms):
         self.transforms = transforms
 
-    def __call__(self, img, mask):
+    def __call__(self, img, mask, pred_mask=None):
         assert img.size == mask.size
         for t in self.transforms:
-            img, mask = t(img, mask)
-        return img, mask
+            img, mask, pred_mask = t(img, mask, pred_mask=pred_mask)
+        return img, mask, pred_mask
 
 
 class RandomCrop(object):
@@ -29,6 +29,7 @@ class RandomCrop(object):
     A random crop is taken such that the crop fits within the image.
     If a centroid is passed in, the crop must intersect the centroid.
     """
+
     def __init__(self, size=512, ignore_index=12, nopad=True):
 
         if isinstance(size, numbers.Number):
@@ -39,13 +40,13 @@ class RandomCrop(object):
         self.nopad = nopad
         self.pad_color = (0, 0, 0)
 
-    def __call__(self, img, mask, centroid=None):
+    def __call__(self, img, mask, centroid=None, pred_mask=None):
         assert img.size == mask.size
         w, h = img.size
         # ASSUME H, W
         th, tw = self.size
         if w == tw and h == th:
-            return img, mask
+            return img, mask, pred_mask
 
         if self.nopad:
             if th > h or tw > w:
@@ -66,6 +67,10 @@ class RandomCrop(object):
             if pad_h or pad_w:
                 img = ImageOps.expand(img, border=border, fill=self.pad_color)
                 mask = ImageOps.expand(mask, border=border, fill=self.ignore_index)
+                if pred_mask is not None:
+                    pred_mask = ImageOps.expand(
+                        pred_mask, border=border, fill=self.ignore_index
+                    )
                 w, h = img.size
 
         if centroid is not None:
@@ -87,7 +92,15 @@ class RandomCrop(object):
                 y1 = 0
             else:
                 y1 = random.randint(0, h - th)
-        return img.crop((x1, y1, x1 + tw, y1 + th)), mask.crop((x1, y1, x1 + tw, y1 + th))
+        return (
+            img.crop((x1, y1, x1 + tw, y1 + th)),
+            mask.crop((x1, y1, x1 + tw, y1 + th)),
+            (
+                pred_mask.crop((x1, y1, x1 + tw, y1 + th))
+                if pred_mask is not None
+                else None
+            ),
+        )
 
 
 class PadImage(object):
@@ -102,13 +115,17 @@ class PadImage(object):
         w, h = img.size
 
         if w > tw or h > th:
-            wpercent = (tw / float(w))
+            wpercent = tw / float(w)
             target_h = int((float(img.size[1]) * float(wpercent)))
-            img, mask = img.resize((tw, target_h), Image.BICUBIC), mask.resize((tw, target_h), Image.NEAREST)
+            img, mask = img.resize((tw, target_h), Image.BICUBIC), mask.resize(
+                (tw, target_h), Image.NEAREST
+            )
 
         w, h = img.size
         img = ImageOps.expand(img, border=(0, 0, tw - w, th - h), fill=0)
-        mask = ImageOps.expand(mask, border=(0, 0, tw - w, th - h), fill=self.ignore_index)
+        mask = ImageOps.expand(
+            mask, border=(0, 0, tw - w, th - h), fill=self.ignore_index
+        )
 
         return img, mask
 
@@ -122,7 +139,8 @@ class RandomHorizontalFlip(object):
         if mask is not None:
             if random.random() < self.prob:
                 return img.transpose(Image.FLIP_LEFT_RIGHT), mask.transpose(
-                    Image.FLIP_LEFT_RIGHT)
+                    Image.FLIP_LEFT_RIGHT
+                )
             else:
                 return img, mask
         else:
@@ -140,7 +158,8 @@ class RandomVerticalFlip(object):
         if mask is not None:
             if random.random() < self.prob:
                 return img.transpose(Image.FLIP_TOP_BOTTOM), mask.transpose(
-                    Image.FLIP_TOP_BOTTOM)
+                    Image.FLIP_TOP_BOTTOM
+                )
             else:
                 return img, mask
         else:
@@ -151,39 +170,45 @@ class RandomVerticalFlip(object):
 
 
 class Resize(object):
-    def __init__(self, size: tuple = (512,  512)):
+    def __init__(self, size: tuple = (512, 512)):
         self.size = size  # size: (h, w)
 
     def __call__(self, img, mask):
         assert img.size == mask.size
-        return img.resize(self.size, Image.BICUBIC), mask.resize(self.size, Image.NEAREST)
+        return img.resize(self.size, Image.BICUBIC), mask.resize(
+            self.size, Image.NEAREST
+        )
 
 
 class RandomScale(object):
-    def __init__(self, scale_list=[0.75, 1.0, 1.25], mode='value'):
+    def __init__(self, scale_list=[0.75, 1.0, 1.25], mode="value"):
         self.scale_list = scale_list
         self.mode = mode
 
-    def __call__(self, img, mask):
+    def __call__(self, img, mask, pred_mask=None):
         oh, ow = img.size
         scale_amt = 1.0
-        if self.mode == 'value':
+        if self.mode == "value":
             scale_amt = np.random.choice(self.scale_list, 1)
-        elif self.mode == 'range':
+        elif self.mode == "range":
             scale_amt = random.uniform(self.scale_list[0], self.scale_list[-1])
         h = int(scale_amt * oh)
         w = int(scale_amt * ow)
-        return img.resize((w, h), Image.BICUBIC), mask.resize((w, h), Image.NEAREST)
+        return (
+            img.resize((w, h), Image.BICUBIC),
+            mask.resize((w, h), Image.NEAREST),
+            pred_mask.resize((w, h), Image.NEAREST) if pred_mask is not None else None,
+        )
 
 
 class ColorJitter(object):
     def __init__(self, brightness=0.5, contrast=0.5, saturation=0.5):
-        if not brightness is None and brightness>0:
-            self.brightness = [max(1-brightness, 0), 1+brightness]
-        if not contrast is None and contrast>0:
-            self.contrast = [max(1-contrast, 0), 1+contrast]
-        if not saturation is None and saturation>0:
-            self.saturation = [max(1-saturation, 0), 1+saturation]
+        if not brightness is None and brightness > 0:
+            self.brightness = [max(1 - brightness, 0), 1 + brightness]
+        if not contrast is None and contrast > 0:
+            self.contrast = [max(1 - contrast, 0), 1 + contrast]
+        if not saturation is None and saturation > 0:
+            self.saturation = [max(1 - saturation, 0), 1 + saturation]
 
     def __call__(self, img, mask=None):
         r_brightness = random.uniform(self.brightness[0], self.brightness[1])
@@ -199,36 +224,47 @@ class ColorJitter(object):
 
 
 class SmartCropV1(object):
-    def __init__(self, crop_size=512,
-                 max_ratio=0.75,
-                 ignore_index=12, nopad=False):
+    def __init__(self, crop_size=512, max_ratio=0.75, ignore_index=12, nopad=False):
         self.crop_size = crop_size
         self.max_ratio = max_ratio
         self.ignore_index = ignore_index
         self.crop = RandomCrop(crop_size, ignore_index=ignore_index, nopad=nopad)
 
-    def __call__(self, img, mask):
+    def __call__(self, img, mask, pred_mask=None):
         assert img.size == mask.size
         count = 0
         while True:
-            img_crop, mask_crop = self.crop(img.copy(), mask.copy())
+            img_crop, mask_crop, pred_mask = self.crop(
+                img.copy(), mask.copy(), pred_mask=pred_mask
+            )
             count += 1
             labels, cnt = np.unique(np.array(mask_crop), return_counts=True)
             cnt = cnt[labels != self.ignore_index]
+            if pred_mask is not None:
+                pred_labels, pred_cnt = np.unique(
+                    np.array(pred_mask), return_counts=True
+                )
+                pred_cnt = pred_cnt[pred_labels != self.ignore_index]
+                cnt = np.concatenate((cnt, pred_cnt))
             if len(cnt) > 1 and np.max(cnt) / np.sum(cnt) < self.max_ratio:
                 break
             if count > 10:
                 break
 
-        return img_crop, mask_crop
+        return img_crop, mask_crop, pred_mask
 
 
 class SmartCropV2(object):
-    def __init__(self, crop_size=512, num_classes=13,
-                 class_interest=[2, 3],
-                 class_ratio=[0.1, 0.25],
-                 max_ratio=0.75,
-                 ignore_index=12, nopad=True):
+    def __init__(
+        self,
+        crop_size=512,
+        num_classes=13,
+        class_interest=[2, 3],
+        class_ratio=[0.1, 0.25],
+        max_ratio=0.75,
+        ignore_index=12,
+        nopad=True,
+    ):
         self.crop_size = crop_size
         self.num_classes = num_classes
         self.class_interest = class_interest

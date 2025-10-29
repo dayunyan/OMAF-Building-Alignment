@@ -4,11 +4,11 @@
 # -o fig_results/xbd/unetformer \
 # -t 'lr' -ph 512 -pw 512 -b 4 -d "building"
 
-python inference_emd.py \
--i ../data/segmentation/Turkey/Islahiye/pre/test/images \
--c config/xBD_Teq/unetformer.py \
--o fig_results/xbd_teq/emd \
--t 'lr' -ph 512 -pw 512 -b 4 -d "building"
+# python inference_emd.py \
+# -i ../data/segmentation/Turkey/Islahiye/pre/test/images \
+# -c config/xBD_Teq/unetformer.py \
+# -o fig_results/xbd_teq/emd \
+# -t 'lr' -ph 512 -pw 512 -b 4 -d "building"
 
 # python inference_advent.py \
 # -i ../data/segmentation/Turkey/Islahiye/pre/test/images \
@@ -21,3 +21,15 @@ python inference_emd.py \
 # -c config/xBD_Teq/unetformer.py \
 # -o fig_results/xbd_teq/advent_emd \
 # -t 'lr' -ph 512 -pw 512 -b 4 -d "building"
+
+python inference_offset_v5.py \
+-i ../data/segmentation/Turkey/Islahiye/pre/test/images \
+-c config/teq/v5_offset.py \
+-o fig_results/teq/offset-v5-pretrain-xbd-RSB-predict-object \
+ -ph 512 -pw 512 -b 4 -d "building"
+
+# python inference_offset.py \
+# -i ../data/segmentation/Turkey/Islahiye/pre/test/images \
+# -c config/teq/v4_offset.py \
+# -o fig_results/teq/offset-v4-pretrain-xbd-RSB-predict-object \
+#  -ph 512 -pw 512 -b 4 -d "building"
