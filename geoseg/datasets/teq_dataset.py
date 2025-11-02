@@ -21,7 +21,7 @@ TEST_IMG_SIZE = (1024, 1024)
 
 
 def get_training_transform():
-    additional_targets = {"pred_mask": "mask"}  # 将pred_mask视为与mask相同类型
+    additional_targets = {"align_conf": "mask"}  # 将pred_mask视为与mask相同类型
     train_transform = [
         albu.Resize(height=INPUT_IMG_SIZE[0], width=INPUT_IMG_SIZE[1]),
         albu.RandomRotate90(p=0.5),
@@ -30,7 +30,7 @@ def get_training_transform():
     return albu.Compose(train_transform, additional_targets=additional_targets)
 
 
-def train_aug(img, mask, pred_mask=None):
+def train_aug(img, mask, align_conf=None):
     crop_aug = Compose(
         [
             RandomScale(scale_list=[0.5, 0.75, 1.0, 1.25, 1.5], mode="value"),
@@ -39,22 +39,25 @@ def train_aug(img, mask, pred_mask=None):
             ),
         ]
     )
-    img, mask, pred_mask = crop_aug(img, mask, pred_mask)
+    img, mask, align_conf = crop_aug(img, mask, align_conf)
     img, mask = np.array(img), np.array(mask)
-    if pred_mask is not None:
-        pred_mask = np.array(pred_mask)
+    if align_conf is not None:
+        align_conf = np.array(align_conf)
         aug = get_training_transform()(
-            image=img.copy(), mask=mask.copy(), pred_mask=pred_mask.copy()
+            image=img.copy(), mask=mask.copy(), align_conf=align_conf.copy()
         )
-        img, mask, pred_mask = aug["image"], aug["mask"], aug["pred_mask"]
+        img, mask, align_conf = aug["image"], aug["mask"], aug["align_conf"]
     else:
         aug = get_training_transform()(image=img.copy(), mask=mask.copy())
         img, mask = aug["image"], aug["mask"]
-    return img, mask, pred_mask
+    return img, mask, align_conf
 
 
 def get_val_transform():
-    additional_targets = {"pred_mask": "mask"}  # 将pred_mask视为与mask相同类型
+    additional_targets = {
+        "align_conf": "mask",
+        "gt": "mask",
+    }  # 将pred_mask视为与mask相同类型
     val_transform = [
         albu.Resize(height=INPUT_IMG_SIZE[0], width=INPUT_IMG_SIZE[1]),
         albu.Normalize(mean=[0.508, 0.458, 0.430], std=[0.194, 0.172, 0.158]),
@@ -62,18 +65,38 @@ def get_val_transform():
     return albu.Compose(val_transform, additional_targets=additional_targets)
 
 
-def val_aug(img, mask, pred_mask=None):
+def val_aug(img, mask, align_conf=None, gt=None):
     img, mask = np.array(img), np.array(mask)
-    if pred_mask is not None:
-        pred_mask = np.array(pred_mask)
+    if align_conf is not None and gt is not None:
+        align_conf = np.array(align_conf)
+        gt = np.array(gt)
         aug = get_val_transform()(
-            image=img.copy(), mask=mask.copy(), pred_mask=pred_mask.copy()
+            image=img.copy(),
+            mask=mask.copy(),
+            align_conf=align_conf.copy(),
+            gt=gt.copy(),
         )
-        img, mask, pred_mask = aug["image"], aug["mask"], aug["pred_mask"]
+        img, mask, align_conf, gt = (
+            aug["image"],
+            aug["mask"],
+            aug["align_conf"],
+            aug["gt"],
+        )
     else:
-        aug = get_val_transform()(image=img.copy(), mask=mask.copy())
-        img, mask = aug["image"], aug["mask"]
-    return img, mask, pred_mask
+        if align_conf is not None:
+            align_conf = np.array(align_conf)
+            aug = get_val_transform()(
+                image=img.copy(), mask=mask.copy(), align_conf=align_conf.copy()
+            )
+            img, mask, align_conf = aug["image"], aug["mask"], aug["align_conf"]
+        elif gt is not None:
+            gt = np.array(gt)
+            aug = get_val_transform()(image=img.copy(), mask=mask.copy(), gt=gt.copy())
+            img, mask, gt = aug["image"], aug["mask"], aug["gt"]
+        else:
+            aug = get_val_transform()(image=img.copy(), mask=mask.copy())
+            img, mask = aug["image"], aug["mask"]
+    return img, mask, align_conf, gt
 
 
 class TeqDataset(Dataset):
@@ -90,6 +113,8 @@ class TeqDataset(Dataset):
         mosaic_ratio=0.0,
         img_size=ORIGIN_IMG_SIZE,
         pred_dir=None,
+        align_dir=None,
+        align_suffix=".pt",
     ):
         self.data_root = data_root
         self.img_dir = img_dir
@@ -102,6 +127,8 @@ class TeqDataset(Dataset):
         self.mosaic_ratio = mosaic_ratio
         self.img_size = img_size
         self.pred_dir = pred_dir
+        self.align_dir = align_dir
+        self.align_suffix = align_suffix
 
         self.img_ids = self.get_img_ids(
             self.data_root,
@@ -114,18 +141,7 @@ class TeqDataset(Dataset):
         p_ratio = random.random()
         if p_ratio > self.mosaic_ratio or self.mode == "val" or self.mode == "test":
             if self.mode == "test":
-                img, mask, pred_mask = self.load_img_and_mask(
-                    index,
-                    self.img_ids,
-                    self.data_root,
-                    self.img_dir,
-                    self.img_suffix,
-                    self.gt_dir,
-                    self.mask_suffix,
-                    self.pred_dir,
-                )
-            else:
-                img, mask, pred_mask = self.load_img_and_mask(
+                img, mask, align_conf, gt = self.load_img_and_mask(
                     index,
                     self.img_ids,
                     self.data_root,
@@ -134,9 +150,25 @@ class TeqDataset(Dataset):
                     self.mask_dir,
                     self.mask_suffix,
                     self.pred_dir,
+                    self.align_dir,
+                    self.align_suffix,
+                    gt_dir=self.gt_dir,
+                )
+            else:
+                img, mask, align_conf, gt = self.load_img_and_mask(
+                    index,
+                    self.img_ids,
+                    self.data_root,
+                    self.img_dir,
+                    self.img_suffix,
+                    self.mask_dir,
+                    self.mask_suffix,
+                    self.pred_dir,
+                    self.align_dir,
+                    self.align_suffix,
                 )
         else:
-            img, mask, pred_mask = self.load_mosaic_img_and_mask(
+            img, mask, align_conf, gt = self.load_mosaic_img_and_mask(
                 index,
                 self.img_ids,
                 self.data_root,
@@ -145,18 +177,31 @@ class TeqDataset(Dataset):
                 self.mask_dir,
                 self.mask_suffix,
                 self.pred_dir,
+                self.align_dir,
+                self.align_suffix,
             )
         if self.transform:
-            img, mask, pred_mask = self.transform(img, mask, pred_mask)
+            if self.mode == "test":
+                img, mask, align_conf, gt = self.transform(img, mask, align_conf, gt)
+            else:
+                img, mask, align_conf = self.transform(img, mask, align_conf)
 
         img = torch.from_numpy(img).permute(2, 0, 1).float()
         mask = torch.from_numpy(mask / 255.0).long()
-        if pred_mask is not None:
-            pred_mask = torch.from_numpy(pred_mask / 255.0).long()
+        # if pred_mask is not None:
+        #     pred_mask = torch.from_numpy(pred_mask / 255.0).long()
+        if align_conf is not None:
+            align_conf = torch.from_numpy(align_conf)
+
+        if gt is not None:
+            gt = torch.from_numpy(gt / 255.0).long()
+
         img_id = self.img_ids[index]
         results = dict(
-            img_id=img_id, img=img, gt_semantic_seg=mask, pred_semantic_seg=pred_mask
+            img_id=img_id, img=img, gt_semantic_seg=mask, align_conf=align_conf
         )
+        if self.mode == "test":
+            results.update(dict(align_gt=gt))
         return results
 
     def __len__(self):
@@ -190,6 +235,9 @@ class TeqDataset(Dataset):
         mask_dir,
         mask_suffix,
         pred_dir=None,
+        align_dir=None,
+        align_suffix=".pt",
+        gt_dir=None,
     ):
         img_id = img_ids[index]
         img_name = osp.join(data_root, img_dir, img_id + img_suffix)
@@ -197,12 +245,25 @@ class TeqDataset(Dataset):
         img = Image.open(img_name).convert("RGB")
         mask = Image.open(mask_name).convert("L")
         pred_mask = None
+        align_conf = None
+        gt = None
         if pred_dir:
             pred_name = osp.join(data_root, pred_dir, img_id + mask_suffix)
             if osp.exists(pred_name):
                 pred_mask = Image.open(pred_name).convert("L")
 
-        return img, mask, pred_mask
+        if align_dir:
+            conf_name = osp.join(data_root, align_dir, img_id + align_suffix)
+            if osp.exists(conf_name):
+                align_conf = torch.load(conf_name).cpu().numpy()
+                align_conf = Image.fromarray(align_conf, mode="F")
+
+        if gt_dir:
+            gt_name = osp.join(data_root, gt_dir, img_id + mask_suffix)
+            if osp.exists(gt_name):
+                gt = Image.open(gt_name).convert("L")
+
+        return img, mask, align_conf, gt
 
     def load_mosaic_img_and_mask(
         self,
@@ -214,9 +275,11 @@ class TeqDataset(Dataset):
         mask_dir,
         mask_suffix,
         pred_dir=None,
+        align_dir=None,
+        align_suffix=".pt",
     ):
         indexes = [index] + [random.randint(0, len(img_ids) - 1) for _ in range(3)]
-        img_a, mask_a, pred_mask_a = self.load_img_and_mask(
+        img_a, mask_a, align_conf_a, _ = self.load_img_and_mask(
             indexes[0],
             img_ids,
             data_root,
@@ -225,8 +288,10 @@ class TeqDataset(Dataset):
             mask_dir,
             mask_suffix,
             pred_dir,
+            align_dir,
+            align_suffix,
         )
-        img_b, mask_b, pred_mask_b = self.load_img_and_mask(
+        img_b, mask_b, align_conf_b, _ = self.load_img_and_mask(
             indexes[1],
             img_ids,
             data_root,
@@ -235,8 +300,10 @@ class TeqDataset(Dataset):
             mask_dir,
             mask_suffix,
             pred_dir,
+            align_dir,
+            align_suffix,
         )
-        img_c, mask_c, pred_mask_c = self.load_img_and_mask(
+        img_c, mask_c, align_conf_c, _ = self.load_img_and_mask(
             indexes[2],
             img_ids,
             data_root,
@@ -245,8 +312,10 @@ class TeqDataset(Dataset):
             mask_dir,
             mask_suffix,
             pred_dir,
+            align_dir,
+            align_suffix,
         )
-        img_d, mask_d, pred_mask_d = self.load_img_and_mask(
+        img_d, mask_d, align_conf_d, _ = self.load_img_and_mask(
             indexes[3],
             img_ids,
             data_root,
@@ -255,17 +324,19 @@ class TeqDataset(Dataset):
             mask_dir,
             mask_suffix,
             pred_dir,
+            align_dir,
+            align_suffix,
         )
 
         img_a, mask_a = np.array(img_a), np.array(mask_a)
         img_b, mask_b = np.array(img_b), np.array(mask_b)
         img_c, mask_c = np.array(img_c), np.array(mask_c)
         img_d, mask_d = np.array(img_d), np.array(mask_d)
-        if pred_mask_a is not None:
-            pred_mask_a = np.array(pred_mask_a)
-            pred_mask_b = np.array(pred_mask_b)
-            pred_mask_c = np.array(pred_mask_c)
-            pred_mask_d = np.array(pred_mask_d)
+        if align_conf_a is not None:
+            align_conf_a = np.array(align_conf_a)
+            align_conf_b = np.array(align_conf_b)
+            align_conf_c = np.array(align_conf_c)
+            align_conf_d = np.array(align_conf_d)
 
         h = self.img_size[0]
         w = self.img_size[1]
@@ -286,39 +357,39 @@ class TeqDataset(Dataset):
         random_crop_c = albu.RandomCrop(width=crop_size_c[0], height=crop_size_c[1])
         random_crop_d = albu.RandomCrop(width=crop_size_d[0], height=crop_size_d[1])
 
-        if pred_mask_a is not None:
+        if align_conf_a is not None:
             croped_a = random_crop_a(
-                image=img_a.copy(), mask=mask_a.copy(), pred_mask=pred_mask_a.copy()
+                image=img_a.copy(), mask=mask_a.copy(), align_conf=align_conf_a.copy()
             )
             croped_b = random_crop_b(
-                image=img_b.copy(), mask=mask_b.copy(), pred_mask=pred_mask_b.copy()
+                image=img_b.copy(), mask=mask_b.copy(), align_conf=align_conf_b.copy()
             )
             croped_c = random_crop_c(
-                image=img_c.copy(), mask=mask_c.copy(), pred_mask=pred_mask_c.copy()
+                image=img_c.copy(), mask=mask_c.copy(), align_conf=align_conf_c.copy()
             )
             croped_d = random_crop_d(
-                image=img_d.copy(), mask=mask_d.copy(), pred_mask=pred_mask_d.copy()
+                image=img_d.copy(), mask=mask_d.copy(), align_conf=align_conf_d.copy()
             )
 
-            img_crop_a, mask_crop_a, pred_mask_crop_a = (
+            img_crop_a, mask_crop_a, align_conf_crop_a = (
                 croped_a["image"],
                 croped_a["mask"],
-                croped_a["pred_mask"],
+                croped_a["align_conf"],
             )
-            img_crop_b, mask_crop_b, pred_mask_crop_b = (
+            img_crop_b, mask_crop_b, align_conf_crop_b = (
                 croped_b["image"],
                 croped_b["mask"],
-                croped_b["pred_mask"],
+                croped_b["align_conf"],
             )
-            img_crop_c, mask_crop_c, pred_mask_crop_c = (
+            img_crop_c, mask_crop_c, align_conf_crop_c = (
                 croped_c["image"],
                 croped_c["mask"],
-                croped_c["pred_mask"],
+                croped_c["align_conf"],
             )
-            img_crop_d, mask_crop_d, pred_mask_crop_d = (
+            img_crop_d, mask_crop_d, align_conf_crop_d = (
                 croped_d["image"],
                 croped_d["mask"],
-                croped_d["pred_mask"],
+                croped_d["align_conf"],
             )
         else:
             croped_a = random_crop_a(image=img_a.copy(), mask=mask_a.copy())
@@ -344,18 +415,20 @@ class TeqDataset(Dataset):
         img = Image.fromarray(img)
         mask = Image.fromarray(mask)
 
-        pred_mask = None
-        if pred_mask_a is not None:
-            top_pred_mask = np.concatenate((pred_mask_crop_a, pred_mask_crop_b), axis=1)
-            bottom_pred_mask = np.concatenate(
-                (pred_mask_crop_c, pred_mask_crop_d), axis=1
+        align_conf = None
+        if align_conf_a is not None:
+            top_align_conf = np.concatenate(
+                (align_conf_crop_a, align_conf_crop_b), axis=1
             )
-            pred_mask = np.concatenate((top_pred_mask, bottom_pred_mask), axis=0)
-            pred_mask = np.ascontiguousarray(pred_mask)
-            pred_mask = Image.fromarray(pred_mask)
+            bottom_align_conf = np.concatenate(
+                (align_conf_crop_c, align_conf_crop_d), axis=1
+            )
+            align_conf = np.concatenate((top_align_conf, bottom_align_conf), axis=0)
+            align_conf = np.ascontiguousarray(align_conf)
+            align_conf = Image.fromarray(align_conf)
         # print(img.shape)
 
-        return img, mask, pred_mask
+        return img, mask, align_conf, None
 
 
 def show_img_mask_seg(seg_path, img_path, mask_path, start_seg_index):

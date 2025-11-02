@@ -11,11 +11,11 @@ class Compose(object):
     def __init__(self, transforms):
         self.transforms = transforms
 
-    def __call__(self, img, mask, pred_mask=None):
+    def __call__(self, img, mask, align_conf=None):
         assert img.size == mask.size
         for t in self.transforms:
-            img, mask, pred_mask = t(img, mask, pred_mask=pred_mask)
-        return img, mask, pred_mask
+            img, mask, align_conf = t(img, mask, align_conf=align_conf)
+        return img, mask, align_conf
 
 
 class RandomCrop(object):
@@ -40,13 +40,13 @@ class RandomCrop(object):
         self.nopad = nopad
         self.pad_color = (0, 0, 0)
 
-    def __call__(self, img, mask, centroid=None, pred_mask=None):
+    def __call__(self, img, mask, centroid=None, align_conf=None):
         assert img.size == mask.size
         w, h = img.size
         # ASSUME H, W
         th, tw = self.size
         if w == tw and h == th:
-            return img, mask, pred_mask
+            return img, mask, align_conf
 
         if self.nopad:
             if th > h or tw > w:
@@ -67,9 +67,9 @@ class RandomCrop(object):
             if pad_h or pad_w:
                 img = ImageOps.expand(img, border=border, fill=self.pad_color)
                 mask = ImageOps.expand(mask, border=border, fill=self.ignore_index)
-                if pred_mask is not None:
-                    pred_mask = ImageOps.expand(
-                        pred_mask, border=border, fill=self.ignore_index
+                if align_conf is not None:
+                    align_conf = ImageOps.expand(
+                        align_conf, border=border, fill=self.ignore_index
                     )
                 w, h = img.size
 
@@ -96,8 +96,8 @@ class RandomCrop(object):
             img.crop((x1, y1, x1 + tw, y1 + th)),
             mask.crop((x1, y1, x1 + tw, y1 + th)),
             (
-                pred_mask.crop((x1, y1, x1 + tw, y1 + th))
-                if pred_mask is not None
+                align_conf.crop((x1, y1, x1 + tw, y1 + th))
+                if align_conf is not None
                 else None
             ),
         )
@@ -185,7 +185,7 @@ class RandomScale(object):
         self.scale_list = scale_list
         self.mode = mode
 
-    def __call__(self, img, mask, pred_mask=None):
+    def __call__(self, img, mask, align_conf=None):
         oh, ow = img.size
         scale_amt = 1.0
         if self.mode == "value":
@@ -197,7 +197,11 @@ class RandomScale(object):
         return (
             img.resize((w, h), Image.BICUBIC),
             mask.resize((w, h), Image.NEAREST),
-            pred_mask.resize((w, h), Image.NEAREST) if pred_mask is not None else None,
+            (
+                align_conf.resize((w, h), Image.BICUBIC)
+                if align_conf is not None
+                else None
+            ),
         )
 
 
@@ -230,28 +234,22 @@ class SmartCropV1(object):
         self.ignore_index = ignore_index
         self.crop = RandomCrop(crop_size, ignore_index=ignore_index, nopad=nopad)
 
-    def __call__(self, img, mask, pred_mask=None):
+    def __call__(self, img, mask, align_conf=None):
         assert img.size == mask.size
         count = 0
         while True:
-            img_crop, mask_crop, pred_mask = self.crop(
-                img.copy(), mask.copy(), pred_mask=pred_mask
+            img_crop, mask_crop, align_conf = self.crop(
+                img.copy(), mask.copy(), align_conf=align_conf
             )
             count += 1
             labels, cnt = np.unique(np.array(mask_crop), return_counts=True)
             cnt = cnt[labels != self.ignore_index]
-            if pred_mask is not None:
-                pred_labels, pred_cnt = np.unique(
-                    np.array(pred_mask), return_counts=True
-                )
-                pred_cnt = pred_cnt[pred_labels != self.ignore_index]
-                cnt = np.concatenate((cnt, pred_cnt))
             if len(cnt) > 1 and np.max(cnt) / np.sum(cnt) < self.max_ratio:
                 break
             if count > 10:
                 break
 
-        return img_crop, mask_crop, pred_mask
+        return img_crop, mask_crop, align_conf
 
 
 class SmartCropV2(object):

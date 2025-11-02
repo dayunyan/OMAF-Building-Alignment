@@ -1,4 +1,6 @@
 import os
+from typing import Optional
+import cv2
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -77,6 +79,91 @@ def visualize_masks(mask1, mask2, save_path, file_name):
     img.save(os.path.join(save_path, f"{file_name}.png"))
 
     return img  # 可选：返回PIL图像对象
+
+
+def visualize_aligned_mask(
+    image,
+    prediction,
+    align_conf,
+    mean: Optional[np.ndarray] = np.array([0.485, 0.456, 0.406]),
+    std: Optional[np.ndarray] = np.array([0.229, 0.224, 0.225]),
+    save_path: Optional[str] = None,
+    cmap: str = "jet",  # 置信度渐变配色（可换 viridis/plasma）
+):
+    """
+    在原图上叠加红色半透明预测前景和置信度渐变图
+    Args:
+        image: 标准化后的图像，shape=(C,H,W)或(H,W,C)，Tensor/numpy
+        prediction: 预测结果（0=背景，1=前景），shape=(H,W)，Tensor/numpy
+        align_conf: 置信度图（0-1），shape=(H,W)，Tensor/numpy
+        mean: 标准化时使用的均值，shape=(3,)，默认 ImageNet 均值 [0.485, 0.456, 0.406]
+        std: 标准化时使用的标准差，shape=(3,)，默认 ImageNet 标准差 [0.229, 0.224, 0.225]
+        save_path: 图像保存路径（None 则直接显示）
+        cmap: 置信度渐变配色方案
+    """
+
+    def to_numpy(tensor) -> np.ndarray:
+        """将 Tensor 转为 numpy 数组，处理梯度和设备"""
+        if isinstance(tensor, torch.Tensor):
+            return tensor.detach().cpu().numpy()
+        return tensor
+
+    # 转换所有输入为 numpy
+    image_np = to_numpy(image)
+    pred_np = to_numpy(prediction)
+    conf_np = to_numpy(align_conf)
+
+    if image_np.ndim == 3:
+        if image_np.shape[0] == 3:  # (C,H,W) → (H,W,C)
+            image_np = np.transpose(image_np, (1, 2, 0))
+    else:
+        raise ValueError(f"图像维度错误，应为 3 维，实际为 {image_np.ndim} 维")
+
+    image_np = image_np * std + mean
+    image_np = np.clip(image_np, 0.0, 1.0)
+    image_uint8 = (image_np * 255).astype(np.uint8)
+
+    # 确保预测图为 (H,W) 二值图
+    pred_np = pred_np.squeeze()
+    pred_mask = (pred_np > 0.5).astype(np.uint8)
+
+    red_mask = np.zeros_like(image_uint8)
+    red_mask[pred_mask == 1, 2] = 255  # 红色通道（BGR 中索引 2 是红色）
+
+    # 红色蒙版半透明叠加（alpha=0.5）
+    image_with_pred = cv2.addWeighted(image_uint8, 1.0, red_mask, 0.5, 0)
+
+    conf_np = np.clip(conf_np.squeeze(), 0.0, 1.0)
+
+    fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+
+    # 绘制原图 + 红色预测蒙版
+    ax.imshow(image_np)
+    ax.imshow(red_mask)  # 叠加红色半透明预测
+
+    # 绘制置信度渐变（半透明叠加）
+    conf_im = ax.imshow(conf_np, cmap=cmap, alpha=0.6)  # alpha 控制透明度
+
+    # 设置画布样式
+    ax.axis("off")
+    ax.set_title(
+        "Image + Red Prediction (α=0.5) + Confidence Gradient", fontsize=14, pad=20
+    )
+
+    cbar = plt.colorbar(conf_im, ax=ax, shrink=0.8, pad=0.02)
+    cbar.set_label("Alignment Confidence (0-1)", fontsize=12)
+    cbar.ax.tick_params(labelsize=10)
+
+    plt.tight_layout()
+    # bbox_inches='tight'：自动裁剪空白区域，保证颜色条不被截断
+    plt.savefig(
+        save_path,
+        dpi=150,
+        bbox_inches="tight",
+        pad_inches=0.2,  # 边缘留白，避免内容贴边
+    )
+
+    plt.close(fig)
 
 
 def visualize_grayscale_as_pseudocolor(
