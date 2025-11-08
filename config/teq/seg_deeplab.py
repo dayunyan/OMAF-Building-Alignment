@@ -1,6 +1,6 @@
 from torch.utils.data import DataLoader
 from geoseg.losses import *
-from geoseg.losses.useful_loss import UnetFormerLoss
+from geoseg.losses.useful_loss import Deeplabv3PlusLoss
 from geoseg.datasets.teq_dataset import *
 from geoseg.models.Deeplabv3plus import DeepLabV3Plus
 from geoseg.models.discriminator import get_fc_discriminator
@@ -9,7 +9,7 @@ from tools.utils import process_model_params
 from tools.alignment import InstanceWiseAlignmentOptimizer
 
 # training hparam
-max_epoch = 50
+max_epoch = 105
 ignore_index = len(CLASSES)
 train_batch_size = 64
 val_batch_size = 16
@@ -21,11 +21,11 @@ num_classes = len(CLASSES)
 classes = CLASSES
 warmup_epoch = 10
 
-weights_name = "offset-v6-deeplab-w-align-mask"
+weights_name = "deeplab-r101-512-crop-e105"  # deeplab-w-pred_offsets
 weights_path = "model_weights/offset/{}".format(weights_name)
-test_weights_name = "last-v1"  # "offset-v5-pretrain-xbd-RSB-predict-object-v1"
-log_name = "offset-v6-w-align-mask/{}".format(weights_name)
-visualize_name = "vis_logs/offset-v6-w-align-mask/{}".format(weights_name)
+test_weights_name = "deeplab-r101-512-crop-e105"
+log_name = "deeplab-r101-512-crop-e105/{}".format(weights_name)
+visualize_name = "vis_logs/deeplab-r101-512-crop-e105/{}".format(weights_name)
 monitor = "val_F1"
 monitor_mode = "max"
 save_top_k = 1
@@ -68,17 +68,16 @@ net = DeepLabV3Plus(
 )
 
 # define the loss
-loss = ConfidenceWeightedCrossEntropyLoss(distance_threshold=5)
+loss = Deeplabv3PlusLoss(ignore_index=255)
 
 # define the dataloader
 
 train_dataset = TeqDataset(
     data_root="../data/segmentation/Turkey/Islahiye/pre/train",
     mode="train",
+    mask_dir="labels",  # pred_offsets
     mosaic_ratio=0.25,
     transform=train_aug,
-    align_dir="align",
-    align_suffix=".pt",
 )
 
 val_dataset = TeqDataset(
@@ -86,16 +85,12 @@ val_dataset = TeqDataset(
     mode="test",
     transform=val_aug,
     test_gt_dir="gt",
-    align_dir="align",
-    align_suffix=".pt",
 )
 test_dataset = TeqDataset(
     data_root="../data/segmentation/Turkey/Islahiye/pre/test",
     mode="test",
     transform=val_aug,
     test_gt_dir="gt",
-    align_dir="align",
-    align_suffix=".pt",
 )
 
 train_loader = DataLoader(
@@ -124,5 +119,5 @@ net_params = process_model_params(net, layerwise_params=layerwise_params)
 base_optimizer = torch.optim.AdamW(net_params, lr=lr, weight_decay=weight_decay)
 optimizer = Lookahead(base_optimizer)
 lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-    optimizer, T_0=2, T_mult=2
+    optimizer, T_0=15, T_mult=2
 )

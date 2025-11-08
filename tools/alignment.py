@@ -599,6 +599,279 @@ class InstanceWiseAlignmentOptimizer:
 
         return aligned_label, disp_field, confidence_map
 
+    def align_instance_with_multi_start_output_dict(
+        self,
+        rgb_image: torch.Tensor,
+        label_image: torch.Tensor,
+        gaussian_mu: List[float] = [0.0, 0.0],
+        gaussian_sigma: List[float] = [1.0, 1.0],
+        covariance: List[List[float]] = [[1.0, 0.0], [0.0, 1.0]],
+        base_grid: Optional[torch.Tensor] = None,
+        search_range_norm: float = 0.01,
+        num_candidates: int = 8,
+        nms_radius_norm: float = 0.001,
+        pyramid_args: Optional[List[Dict]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        批量处理所有实例，返回包含bbox、中心坐标、偏移量和置信度的字典
+        返回格式：
+            {
+                'bboxes': [N_instances, 4] 张量，每个元素为[x1, y1, x2, y2]
+                'centroids': [N_instances, 2] 张量，每个元素为[cx, cy]
+                'gt_offsets': [N_instances, 2] 张量，每个元素为[dx, dy]
+                'gt_confidences': [N_instances, 1] 张量，每个元素为置信度
+            }
+        """
+        # 1. 提取实例掩码
+        _, masks, num_objects = self.get_instances(label_image)
+        H, W = label_image.shape
+        device = "cpu"
+
+        # 处理无实例的情况
+        if num_objects == 0:
+            return {
+                "bboxes": torch.empty((0, 4), dtype=torch.float32, device=device),
+                "centroids": torch.empty((0, 2), dtype=torch.float32, device=device),
+                "gt_offsets": torch.empty((0, 2), dtype=torch.float32, device=device),
+                "gt_confidences": torch.empty(
+                    (0, 1), dtype=torch.float32, device=device
+                ),
+            }
+
+        # 2. 复用原函数的金字塔参数和DT图计算逻辑
+        if pyramid_args is None:
+            pyramid_levels = [
+                {
+                    "name": "Coarse",
+                    "sigma": 20.0,
+                    "ksize": 41,
+                    "iters": 50,
+                    "lr": 2e-3,
+                    "reg": 0.3,
+                    "mono": 0.1,
+                },
+                {
+                    "name": "Medium",
+                    "sigma": 10.0,
+                    "ksize": 21,
+                    "iters": 50,
+                    "lr": 5e-4,
+                    "reg": 0.7,
+                    "mono": 0.3,
+                },
+                {
+                    "name": "Fine",
+                    "sigma": 4.0,
+                    "ksize": 9,
+                    "iters": 50,
+                    "lr": 1e-4,
+                    "reg": 0.7,
+                    "mono": 1.0,
+                },
+            ]
+        else:
+            pyramid_levels = pyramid_args
+
+        # 预计算各层级DT图
+        dt_maps = {}
+        for level in pyramid_levels:
+            img_blurred = self.gaussian_blur(rgb_image, level["ksize"], level["sigma"])
+            dt_maps[level["name"]] = self.compute_dt_map(img_blurred)
+
+        # 3. 生成候选初始化偏移
+        directions = list(itertools.product([1.0], repeat=2))  # [-1.0, 0.0, 1.0]
+        candidates = [
+            (dx * search_range_norm, dy * search_range_norm) for dx, dy in directions
+        ]
+
+        # 4. 筛选有效掩码（非空）
+        valid_masks = []
+        valid_indices = []
+        for i, mask in enumerate(masks):
+            if mask.sum() > 0:
+                valid_masks.append(mask)
+                valid_indices.append(i)
+
+        if not valid_masks:
+            return {
+                "bboxes": torch.empty((0, 4), dtype=torch.float32, device=device),
+                "centroids": torch.empty((0, 2), dtype=torch.float32, device=device),
+                "gt_offsets": torch.empty((0, 2), dtype=torch.float32, device=device),
+                "gt_confidences": torch.empty(
+                    (0, 1), dtype=torch.float32, device=device
+                ),
+            }
+
+        # 5. 复用原函数的候选点金字塔优化逻辑
+        candidate_results = []
+        for initial_dx, initial_dy in candidates:
+            current_dxs = [initial_dx] * len(valid_masks)
+            current_dys = [initial_dy] * len(valid_masks)
+            level_histories_list = []
+
+            for level in pyramid_levels:
+                dx_list, dy_list, histories = self.optimize_instance_offset(
+                    rgb_image,
+                    valid_masks,
+                    dt_maps[level["name"]],
+                    initial_dxs=current_dxs,
+                    initial_dys=current_dys,
+                    max_iterations=level["iters"],
+                    lr=level["lr"],
+                    reg_weight=level["reg"],
+                    mono_weight=level["mono"],
+                )
+                level_histories_list.append(histories)
+                current_dxs, current_dys = dx_list, dy_list
+
+            # 记录每个有效实例的优化结果
+            for i in range(len(valid_masks)):
+                final_loss = (
+                    level_histories_list[-1][i]["loss"][-1]
+                    if level_histories_list
+                    else float("inf")
+                )
+                candidate_results.append(
+                    {
+                        "inst_idx": valid_indices[i],
+                        "final_dx": current_dxs[i],
+                        "final_dy": current_dys[i],
+                        "final_loss": final_loss,
+                    }
+                )
+
+        # 6. 复用原函数的NMS和最优偏移选择逻辑
+        optimized_offsets = [(0.0, 0.0)] * num_objects
+        instance_confidences = [0.0] * num_objects
+
+        for inst_idx in range(num_objects):
+            inst_results = [r for r in candidate_results if r["inst_idx"] == inst_idx]
+            if not inst_results:
+                continue
+
+            # 按损失排序并执行NMS
+            inst_results.sort(key=lambda x: x["final_loss"])
+            selected = []
+            nms_radius_sq = nms_radius_norm**2
+
+            for res in inst_results:
+                is_suppressed = False
+                for sel_res in selected:
+                    dist_sq = (res["final_dx"] - sel_res["final_dx"]) ** 2 + (
+                        res["final_dy"] - sel_res["final_dy"]
+                    ) ** 2
+                    if dist_sq < nms_radius_sq:
+                        is_suppressed = True
+                        break
+                if not is_suppressed:
+                    selected.append(res)
+
+            # 选择最优结果并计算置信度
+            if selected:
+                best_res = selected[0]
+                dx, dy = best_res["final_dx"], best_res["final_dy"]
+                optimized_offsets[inst_idx] = (dx, dy)
+                # 转换偏移量为像素坐标用于置信度计算
+                dx_pix = dx * W
+                dy_pix = dy * H
+                instance_confidences[inst_idx] = (
+                    self.calculate_offset_confidence_advanced(
+                        dx_pix, dy_pix, gaussian_mu, gaussian_sigma, covariance
+                    )
+                )
+
+        # 7. 计算每个实例的bbox和中心坐标
+        bboxes = []
+        centroids = []
+        gt_offsets = []
+        gt_confidences = []
+
+        for inst_idx in range(num_objects):
+            mask = masks[inst_idx]
+            dx, dy = optimized_offsets[inst_idx]
+            confidence = instance_confidences[inst_idx]
+
+            # 步骤1：获取原始mask的非零像素坐标
+            y_coords, x_coords = torch.where(mask > 0.5)
+            pixel_count = len(x_coords)
+
+            # 过滤条件1：非零像素数过少（排除单个像素实例）
+            if pixel_count < 2:
+                continue
+
+            # 步骤2：计算原始bbox（x1,y1为左上角，x2,y2为右下角）
+            x1 = torch.min(x_coords).float()
+            y1 = torch.min(y_coords).float()
+            x2 = torch.max(x_coords).float()
+            y2 = torch.max(y_coords).float()
+
+            # 步骤3：修正bbox宽/高为0的情况（避免x1>=x2或y1>=y2）
+            w = x2 - x1
+            h = y2 - y1
+
+            if w <= 0:
+                # 宽度为0，扩展1像素（保持中心不变）
+                expand = (1.0 - w) / 2.0
+                x1 -= expand
+                x2 += expand
+                w = 1.0  # 强制宽度为1
+            if h <= 0:
+                # 高度为0，扩展1像素（保持中心不变）
+                expand = (1.0 - h) / 2.0
+                y1 -= expand
+                y2 += expand
+                h = 1.0  # 强制高度为1
+
+            # 步骤4：过滤面积过小的bbox
+            area = w * h
+            if area < 4:
+                continue
+
+            # 步骤5：过滤宽高比异常的bbox（避免极端细长）
+            aspect_ratio = max(w, h) / min(w, h)
+            if aspect_ratio > 500:
+                continue
+
+            # 步骤6：计算质心（基于原始非零像素的均值，用户要求）
+            cx = torch.mean(x_coords.float())
+            cy = torch.mean(y_coords.float())
+
+            # 步骤7：确保bbox坐标为非负（避免超出图像边界的异常值）
+            x1 = torch.clamp(x1, 0.0, W - 2.0)
+            y1 = torch.clamp(y1, 0.0, H - 2.0)
+            x2 = torch.clamp(x2, x1 + 1.0, W - 1.0)  # 强制x2 > x1
+            y2 = torch.clamp(y2, y1 + 1.0, H - 1.0)  # 强制y2 > y1
+
+            # 收集结果
+            bboxes.append(torch.tensor([x1, y1, x2, y2], device=device))
+            centroids.append(torch.tensor([cx, cy], device=device))
+            gt_offsets.append(torch.tensor([dx, dy], device=device))
+            gt_confidences.append(torch.tensor([confidence], device=device))
+
+        # 8. 转换为指定格式的张量
+        return {
+            "bboxes": (
+                torch.stack(bboxes)
+                if bboxes
+                else torch.empty((0, 4), dtype=torch.float32, device=device)
+            ),
+            "centroids": (
+                torch.stack(centroids)
+                if centroids
+                else torch.empty((0, 2), dtype=torch.float32, device=device)
+            ),
+            "gt_offsets": (
+                torch.stack(gt_offsets)
+                if gt_offsets
+                else torch.empty((0, 2), dtype=torch.float32, device=device)
+            ),
+            "gt_confidences": (
+                torch.stack(gt_confidences)
+                if gt_confidences
+                else torch.empty((0, 1), dtype=torch.float32, device=device)
+            ),
+        }
+
     def calculate_offset_confidence(
         self,
         dx: float,

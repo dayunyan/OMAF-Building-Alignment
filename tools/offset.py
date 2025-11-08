@@ -167,6 +167,55 @@ def offset_tensor_v3(
     return shifted_tensor.to(dtype)
 
 
+def apply_offsets_to_mask(shifted_mask, bboxes, offsets_px):
+    """
+    将每个实例的偏移应用到其在语义掩码中的像素上。
+
+    Args:
+        shifted_mask (np.ndarray): (H, W) 二值掩码，包含所有 *未修正* 的实例。
+        bboxes (np.ndarray): (N, 4) 实例的 BBox [x1, y1, x2, y2]。
+        offsets_px (np.ndarray): (N, 2) 每个实例的像素偏移 [dx, dy]。
+
+    Returns:
+        np.ndarray: (H, W) 修正后的二值掩码。
+    """
+    H, W = shifted_mask.shape
+    corrected_mask = np.zeros_like(shifted_mask, dtype=np.uint8)
+
+    # 1. 创建一个实例ID掩码，以便我们知道哪个像素属于哪个BBox
+    # (注意：BBox 重叠时，ID 较大的会覆盖较小的)
+    instance_id_mask = np.zeros_like(shifted_mask, dtype=np.int32)
+    for i, bbox in enumerate(bboxes):
+        x1, y1, x2, y2 = bbox.astype(int)
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(W, x2), min(H, y2)
+        # 仅在BBox内的掩码像素上分配实例ID
+        bbox_mask_region = shifted_mask[y1:y2, x1:x2] > 0
+        instance_id_mask[y1:y2, x1:x2][bbox_mask_region] = i + 1
+
+    # 2. 逐个实例应用偏移
+    for i in range(len(bboxes)):
+        instance_id = i + 1
+        dx, dy = offsets_px[i]
+
+        # 获取该实例的纯二值掩码
+        instance_pixels = (instance_id_mask == instance_id).astype(np.uint8)
+        if instance_pixels.sum() == 0:
+            continue
+
+        # 3. 创建平移矩阵并应用
+        # M = [[1, 0, dx], [0, 1, dy]]
+        M = np.float32([[1, 0, dx], [0, 1, dy]])
+
+        # 使用 warpAffine 对该实例的像素进行平移
+        shifted_instance_pixels = cv2.warpAffine(instance_pixels, M, (W, H))
+
+        # 将平移后的像素粘贴到最终的修正掩码上
+        corrected_mask[shifted_instance_pixels > 0] = 1
+
+    return corrected_mask
+
+
 if __name__ == "__main__":
 
     # def test_grad():

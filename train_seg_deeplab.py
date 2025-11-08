@@ -13,6 +13,12 @@ from tools.metric import Evaluator
 from pytorch_lightning.loggers import CSVLogger
 import random
 from tools.uda import prob_2_entropy
+from tools.visual import (
+    save_tensor_as_png,
+    visualize_aligned_mask,
+    visualize_masks,
+    visualize_grayscale_as_pseudocolor,
+)
 
 
 def seed_everything(seed):
@@ -70,16 +76,16 @@ class Supervision_Train(pl.LightningModule):
         )
 
         output = self.net(img)
-        loss = self.loss((output["logits"], output["logits_aux"]), mask)
+        loss = self.loss(output["logits"], mask)
 
         pre_mask = nn.Softmax(dim=1)(output["logits"]).argmax(dim=1)
         for i in range(mask.shape[0]):
             self.metrics_train.add_batch(
                 mask[i].cpu().numpy(), pre_mask[i].cpu().numpy()
             )
-        out = {"loss": loss}
-        self.training_step_outputs.append(out)
-        return out
+
+        self.training_step_outputs.append({"loss_tra": loss})
+        return loss
 
     def on_train_epoch_end(self):
         mIoU = np.nanmean(self.metrics_train.Intersection_over_Union())
@@ -108,18 +114,26 @@ class Supervision_Train(pl.LightningModule):
         self.training_step_outputs.clear()
 
     def validation_step(self, batch, batch_idx):
-        img, mask = (
-            batch["img"],
-            batch["gt_semantic_seg"],
-        )
+        img, mask, gt = (batch["img"], batch["gt_semantic_seg"], batch["gt"])
 
         output = self(img)
 
         pre_mask = nn.Softmax(dim=1)(output["logits"]).argmax(dim=1)
-        for i in range(mask.shape[0]):
-            self.metrics_val.add_batch(mask[i].cpu().numpy(), pre_mask[i].cpu().numpy())
+        for i in range(gt.shape[0]):
+            self.metrics_val.add_batch(gt[i].cpu().numpy(), pre_mask[i].cpu().numpy())
 
-        loss = self.loss(output["logits"], mask)
+        if (self.current_epoch + 1) % self.config.check_val_every_n_epoch == 0:
+            for i in range(img.shape[0]):
+                visualize_masks(
+                    pre_mask[i],
+                    gt[i],
+                    os.path.join(
+                        self.config.visualize_name, f"epoch_{self.current_epoch}"
+                    ),
+                    f"{batch['img_id'][i]}_PAM",
+                )
+
+        loss = self.loss(output["logits"], gt)
         out = {
             "loss_val": loss,
         }
@@ -192,6 +206,7 @@ def main():
         model = Supervision_Train.load_from_checkpoint(
             config.pretrained_ckpt_path, config=config, strict=False
         )
+        model.config = config
 
     trainer = pl.Trainer(
         devices=config.gpus,

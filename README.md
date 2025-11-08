@@ -323,3 +323,81 @@ and inspiring researchers to develop their own segmentation networks. Many thank
 - [ttach](https://github.com/qubvel/ttach)
 - [catalyst](https://github.com/catalyst-team/catalyst)
 - [mmsegmentation](https://github.com/open-mmlab/mmsegmentation)
+
+
+## Pipeline
+
+1. 制作数据集
+  - 以1024*1024切割图片，并按照8：1：1分成train、val、test三个子集；
+  - 标注test数据集；
+
+2. 分析test数据的实例偏移分布，并用二维高斯分布拟合。运行：
+```bash
+python instance_offset_analyzer.py # 注意更改代码中的输入路径和保存路径
+```
+检查"output_dir/image_offset_*.csv"文件内容
+
+3. 采用基于边缘增强与方差一致性约束的偏移估计算法，估计test数据的偏移分布，同样用二维高斯分布拟合。运行：
+```bash
+python offset_emi.py # 注意更改代码中的输入路径和保存路径
+```
+检查"output_dir/image_offset_emi_*.csv"文件内容
+
+4. 根据以上两个csv文件获取两个数据之间的分布差异，并记录实际偏移的二维高斯拟合参数。运行：
+```bash
+python distribution_offset_visual.py # 注意更改代码中的输入路径和保存路径
+```
+检查"output_dir/kl_analysis_results.csv"文件内容：
+```python
+[
+  "file1_2d_mu_x", # x方向均值
+  "file1_2d_mu_y", # y方向均值
+  "file1_2d_sigma_x", # x方向的方差
+  "file1_2d_sigma_y", # y方向的方差
+  "file1_2d_rho", # x和y的相关系数
+  "file1_2d_cov" # 协方差矩阵
+]
+```
+
+5. 根据实际偏移的二维高斯分布更新无监督偏移估计的后验概率，将这个概率作为偏移估计的置信度。然后根据无监督偏移估计图和置信度图，构建基于实例的偏移估计标签，保存在数据集与<"images">同级目录<"instances">中。运行：
+```bash
+python offset_confidence.py # 运行main()，用少量test数据测试效果
+
+python offset_instance.py # 标签保存在instances中
+```
+instances标签格式如下：
+```python
+{
+    'bboxes': [N_instances, 4] 张量，每个元素为[x1, y1, x2, y2]
+    'centroids': [N_instances, 2] 张量，每个元素为[cx, cy]
+    'gt_offsets': [N_instances, 2] 张量，每个元素为[dx, dy]
+    'gt_confidences': [N_instances, 1] 张量，每个元素为置信度
+}
+```
+
+6. 接下来需要利用深度神经网络的高泛化能力，估计出更准确的修正标签。
+  1. 首先构建对应的<geoseg/datasets/teq_instance_dataset.py>、<geoseg/models/InstanceOffsetNet.py>、<geoseg/losses/InstanceLoss.py>、<config/teq/instance_offset.py>、<train_offset_instance.py>，以及推理测试流程<inference_offset_instance.sh>、<inference_offset_instance.py>。
+    - train
+    ```bash
+    python train_offset_instance.py -c config/teq/instance_offset.py
+    ```
+    
+    - inference
+    ```bash
+    source inference_offset_instance.sh
+    ```
+  2. 然后用训练好的实例偏移估计网络，对整个数据集的每个样本生成对应的矫正标签。运行：
+  ```bash
+  source generate_corrected_labels.sh # 注意修改路径
+  ```
+
+7. 最后，将上一步生成的矫正标签作为语义分割训练时的标签，正常训练一个分割网络。同样的，构建对应的<geoseg/datasets/teq_dataset.py>、<geoseg/models/Deeplabv3plus.py>、<geoseg/losses/useful_loss.py>、<config/teq/seg_deeplab.py>、<train_seg_deeplab.py>，以及推理测试流程<inference_seg_deeplab.sh>、<inference_seg_deeplab.py>。
+  - train
+  ```bash
+  python train_seg_deeplab.py -c config/teq/seg_deeplab.py
+  ```
+  
+  - inference
+  ```bash
+  source inference_seg_deeplab.sh # 注意修改路径
+  ```

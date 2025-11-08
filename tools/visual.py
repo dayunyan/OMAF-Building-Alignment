@@ -37,6 +37,17 @@ def save_tensor_as_png(tensor, save_path, file_name):
     image.save(os.path.join(save_path, f"{file_name}.png"))
 
 
+def save_mask_as_png(mask_array: np.ndarray, save_path: str):
+    """保存 0/255 的二值 numpy 掩码为 PNG 文件"""
+    if not os.path.exists(os.path.dirname(save_path)):
+        os.makedirs(os.path.dirname(save_path))
+
+    # 使用 PIL 确保以 8 位灰度模式保存 (cv2.imwrite 可能因环境问题保存成 BGR)
+    # 数组形状应为 (H, W)，值应为 0 或 255
+    img = Image.fromarray(mask_array, mode="L")
+    img.save(save_path)
+
+
 def visualize_masks(mask1, mask2, save_path, file_name):
     """
     可视化两个二值掩膜，用不同颜色表示重叠区域
@@ -213,3 +224,231 @@ def visualize_grayscale_as_pseudocolor(
         os.path.join(save_path, f"{file_name}.png"), bbox_inches="tight", dpi=150
     )
     plt.close()
+
+
+def _unnormalize_image(tensor_image):
+    """将标准化的Tensor图像反归一化为 (H,W,C) numpy 数组 (0-255)"""
+    # 假设的均值和标准差 (与 teq_dataset.py 中一致)
+    mean = np.array([0.508, 0.458, 0.430])
+    std = np.array([0.194, 0.172, 0.158])
+
+    img_np = tensor_image.cpu().permute(1, 2, 0).numpy()
+    img_np = (img_np * std + mean) * 255.0
+    img_np = np.clip(img_np, 0, 255).astype(np.uint8)
+    return img_np
+
+
+def _apply_offsets_to_mask(shifted_mask, bboxes, offsets_px):
+    """
+    (内部函数) 将每个实例的偏移应用到其在语义掩码中的像素上。
+
+    Args:
+        shifted_mask (np.ndarray): (H, W) 二值掩码，包含所有 *未修正* 的实例。
+        bboxes (np.ndarray): (N, 4) 实例的 BBox [x1, y1, x2, y2]。
+        offsets_px (np.ndarray): (N, 2) 每个实例的像素偏移 [dx, dy]。
+
+    Returns:
+        np.ndarray: (H, W) 修正后的二值掩码。
+    """
+    H, W = shifted_mask.shape
+    corrected_mask = np.zeros_like(shifted_mask, dtype=np.uint8)
+
+    # 1. 创建一个实例ID掩码，以便我们知道哪个像素属于哪个BBox
+    # (注意：BBox 重叠时，ID 较大的会覆盖较小的)
+    instance_id_mask = np.zeros_like(shifted_mask, dtype=np.int32)
+    for i, bbox in enumerate(bboxes):
+        x1, y1, x2, y2 = bbox.astype(int)
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(W, x2), min(H, y2)
+        # 仅在BBox内的掩码像素上分配实例ID
+        bbox_mask_region = shifted_mask[y1:y2, x1:x2] > 0
+        instance_id_mask[y1:y2, x1:x2][bbox_mask_region] = i + 1
+
+    # 2. 逐个实例应用偏移
+    for i in range(len(bboxes)):
+        instance_id = i + 1
+        dx, dy = offsets_px[i]
+
+        # 获取该实例的纯二值掩码
+        instance_pixels = (instance_id_mask == instance_id).astype(np.uint8)
+        if instance_pixels.sum() == 0:
+            continue
+
+        # 3. 创建平移矩阵并应用
+        # M = [[1, 0, dx], [0, 1, dy]]
+        M = np.float32([[1, 0, dx], [0, 1, dy]])
+
+        # 使用 warpAffine 对该实例的像素进行平移
+        shifted_instance_pixels = cv2.warpAffine(instance_pixels, M, (W, H))
+
+        # 将平移后的像素粘贴到最终的修正掩码上
+        corrected_mask[shifted_instance_pixels > 0] = 1
+
+    return corrected_mask
+
+
+def visualize_correction_overlay(
+    image_tensor,
+    shifted_mask_tensor,
+    bboxes_tensor,
+    pred_offsets_ratio_tensor,
+    save_path,
+    file_name,
+    alpha=0.5,
+):
+    """
+    可视化 1: 在原图上叠加 偏移的掩码(红色) 和 预测修正后的掩码(绿色)。
+
+    Args:
+        image_tensor (torch.Tensor): (C, H, W) 标准化的图像。
+        shifted_mask_tensor (torch.Tensor): (H, W) 带偏移的二值掩码。
+        bboxes_tensor (torch.Tensor): (N, 4) 实例的 BBox。
+        pred_offsets_ratio_tensor (torch.Tensor): (N, 2) 预测的偏移比率。
+        save_path (str): 保存目录。
+        file_name (str): 保存文件名 (不含.png)。
+    """
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+
+    # 1. 转换数据
+    img_rgb = _unnormalize_image(image_tensor)
+    shifted_mask = shifted_mask_tensor.cpu().numpy().astype(np.uint8)
+    bboxes = bboxes_tensor.cpu().numpy()
+    pred_offsets_ratio = pred_offsets_ratio_tensor.cpu().numpy()
+
+    H, W = shifted_mask.shape
+    input_size = np.array([W, H], dtype=np.float32)
+    pred_offsets_px = pred_offsets_ratio * input_size
+
+    # 2. 计算修正后的掩码
+    pred_corrected_mask = _apply_offsets_to_mask(shifted_mask, bboxes, pred_offsets_px)
+
+    # 3. 创建可视化
+    # (H, W, 3)
+    overlay = img_rgb.copy()
+
+    # 蓝色: 偏移的掩码
+    overlay[shifted_mask == 1] = (
+        overlay[shifted_mask == 1] * (1 - alpha) + np.array([0, 0, 255]) * alpha
+    )
+    # 红色: 预测修正后的掩码
+    overlay[pred_corrected_mask == 1] = (
+        overlay[pred_corrected_mask == 1] * (1 - alpha) + np.array([255, 0, 0]) * alpha
+    )
+    # 重叠区域 (R+G=Yellow)
+
+    # 保存图像
+    img = Image.fromarray(overlay.astype(np.uint8))
+    img.save(os.path.join(save_path, f"{file_name}.png"))
+
+
+def visualize_emi_vs_pred_overlay(
+    image_tensor,
+    shifted_mask_tensor,
+    bboxes_tensor,
+    pred_offsets_ratio_tensor,
+    gt_offsets_ratio_tensor,
+    save_path,
+    file_name,
+    alpha=0.5,
+):
+    """
+    可视化 2: 在原图上叠加 预测修正的掩码(蓝色) 和 GT修正的掩码(绿色)。
+
+    Args:
+        (参数同上, 增加了 gt_offsets_ratio_tensor)
+    """
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+
+    # 1. 转换数据
+    img_rgb = _unnormalize_image(image_tensor)
+    shifted_mask = shifted_mask_tensor.cpu().numpy().astype(np.uint8)
+    bboxes = bboxes_tensor.cpu().numpy()
+    pred_offsets_ratio = pred_offsets_ratio_tensor.cpu().numpy()
+    gt_offsets_ratio = gt_offsets_ratio_tensor.cpu().numpy()
+
+    H, W = shifted_mask.shape
+    input_size = np.array([W, H], dtype=np.float32)
+
+    # 2. 计算两个修正掩码
+    pred_offsets_px = pred_offsets_ratio * input_size
+    pred_corrected_mask = _apply_offsets_to_mask(shifted_mask, bboxes, pred_offsets_px)
+
+    gt_offsets_px = gt_offsets_ratio * input_size
+    gt_corrected_mask = _apply_offsets_to_mask(shifted_mask, bboxes, gt_offsets_px)
+
+    # 3. 创建可视化
+    overlay = img_rgb.copy()
+
+    # 绿色: 预测修正
+    overlay[pred_corrected_mask == 1] = (
+        overlay[pred_corrected_mask == 1] * (1 - alpha) + np.array([255, 0, 0]) * alpha
+    )
+    # 蓝色: GT修正
+    overlay[gt_corrected_mask == 1] = (
+        overlay[gt_corrected_mask == 1] * (1 - alpha) + np.array([0, 0, 255]) * alpha
+    )
+    # 重叠区域 (B+G=Cyan)
+
+    # 保存图像
+    img = Image.fromarray(overlay.astype(np.uint8))
+    img.save(os.path.join(save_path, f"{file_name}.png"))
+
+
+def visualize_gt_vs_pred_overlay(
+    image_tensor,
+    shifted_mask_tensor,
+    gt_mask_tensor,
+    bboxes_tensor,
+    pred_offsets_ratio_tensor,
+    save_path,
+    file_name,
+    alpha=0.5,
+):
+    """
+    可视化 1: 在原图上叠加 准确的掩码(绿色) 和 预测修正后的掩码(红色)。
+
+    Args:
+        image_tensor (torch.Tensor): (C, H, W) 标准化的图像。
+        shifted_mask_tensor (torch.Tensor): (H, W) 带偏移的二值掩码。
+        gt_mask_tensor (torch.Tensor): (H, W) 准确的二值掩码。
+        bboxes_tensor (torch.Tensor): (N, 4) 实例的 BBox。
+        pred_offsets_ratio_tensor (torch.Tensor): (N, 2) 预测的偏移比率。
+        save_path (str): 保存目录。
+        file_name (str): 保存文件名 (不含.png)。
+    """
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+
+    # 1. 转换数据
+    img_rgb = _unnormalize_image(image_tensor)
+    shifted_mask = shifted_mask_tensor.cpu().numpy().astype(np.uint8)
+    gt_mask_tensor = gt_mask_tensor.cpu().numpy().astype(np.uint8)
+    bboxes = bboxes_tensor.cpu().numpy()
+    pred_offsets_ratio = pred_offsets_ratio_tensor.cpu().numpy()
+
+    H, W = shifted_mask.shape
+    input_size = np.array([W, H], dtype=np.float32)
+    pred_offsets_px = pred_offsets_ratio * input_size
+
+    # 2. 计算修正后的掩码
+    pred_corrected_mask = _apply_offsets_to_mask(shifted_mask, bboxes, pred_offsets_px)
+
+    # 3. 创建可视化
+    # (H, W, 3)
+    overlay = img_rgb.copy()
+
+    # 红色: 预测修正后的掩码
+    overlay[pred_corrected_mask == 1] = (
+        overlay[pred_corrected_mask == 1] * (1 - alpha) + np.array([255, 0, 0]) * alpha
+    )
+    # 绿色: 准确的掩码
+    overlay[gt_mask_tensor == 1] = (
+        overlay[gt_mask_tensor == 1] * (1 - alpha) + np.array([0, 255, 0]) * alpha
+    )
+    # 重叠区域 (R+G=Yellow)
+
+    # 保存图像
+    img = Image.fromarray(overlay.astype(np.uint8))
+    img.save(os.path.join(save_path, f"{file_name}.png"))
