@@ -17,17 +17,17 @@ backbone_weight_decay = 0.01
 num_classes = len(CLASSES)
 classes = CLASSES
 
-weights_name = "unetformer-w-pred_offsets"
-weights_path = "model_weights/offset/{}".format(weights_name)
-test_weights_name = "unetformer-w-pred_offsets"
-log_name = "offset/{}".format(weights_name)
-visualize_name = "vis_logs/unetformer-w-pred_offsets/{}".format(weights_name)
+weights_name = "unetformer"
+weights_path = "model_weights/Antakya/offset/{}".format(weights_name)
+test_weights_name = "unetformer"
+log_name = "Antakya/offset/{}".format(weights_name)
+visualize_name = "vis_logs/Antakya/unetformer/{}".format(weights_name)
 monitor = "val_F1"
 monitor_mode = "max"
 save_top_k = 1
 save_last = True
 check_val_every_n_epoch = 1
-pretrained_ckpt_path = "model_weights/xbd/unetformer-r18-512-crop-ms-e105/unetformer-r18-512-crop-ms-e105.ckpt"  # "pretrained_weights/stseg_base.pth"  # the path for the pretrained model weight
+pretrained_ckpt_path = None  # "model_weights/xbd/unetformer-r18-512-crop-ms-e105/unetformer-r18-512-crop-ms-e105.ckpt"  # "pretrained_weights/stseg_base.pth"  # the path for the pretrained model weight
 gpus = [
     1,
 ]  # default or gpu ids:[0] or gpu nums: 2, more setting can refer to pytorch_lightning
@@ -52,20 +52,20 @@ use_aux_loss = True
 # define the dataloader
 
 train_dataset = TeqDataset(
-    data_root="../data/segmentation/Turkey/Islahiye/pre/train",
+    data_root="../data/segmentation/Turkey/Antakya/pre/train",
     mode="train",
-    mask_dir="pred_offsets",
+    mask_dir="labels",
     mosaic_ratio=0.25,
     transform=train_aug,
 )
 
 val_dataset = TeqDataset(
-    data_root="../data/segmentation/Turkey/Islahiye/pre/test",
+    data_root="../data/segmentation/Turkey/Antakya/pre/test",
     mode="test",
     transform=val_aug,
 )
 test_dataset = TeqDataset(
-    data_root="../data/segmentation/Turkey/Islahiye/pre/test",
+    data_root="../data/segmentation/Turkey/Antakya/pre/test",
     mode="test",
     transform=val_aug,
 )
@@ -76,7 +76,7 @@ train_loader = DataLoader(
     num_workers=0,
     pin_memory=True,
     shuffle=True,
-    drop_last=True,
+    drop_last=False,
 )
 
 val_loader = DataLoader(

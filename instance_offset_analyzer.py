@@ -163,7 +163,7 @@ class InstanceOffsetAnalyzer:
         dx = gt_x - offset_x  # x方向偏移
         dy = gt_y - offset_y  # y方向偏移
 
-        return -dx, -dy
+        return dx, dy
 
     def sliding_window_match(
         self,
@@ -664,9 +664,11 @@ def main():
     主函数：运行偏移量分析
     """
     # 设置图像目录路径
-    gt_dir = "../data/segmentation/Turkey/Islahiye/pre/test/labels"  # 真实标注图像目录
-    offset_dir = "../data/segmentation/Turkey/Islahiye/pre/test/gt"  # 偏移标注图像目录
-    output_dir = "./vis_logs/offset_analysis"  # 结果输出目录
+    gt_dir = "../data/segmentation/Turkey/Antakya/pre/test/gt"  # 真实标注图像目录
+    offset_dir = (
+        "../data/segmentation/Turkey/Antakya/pre/test/labels"  # 偏移标注图像目录
+    )
+    output_dir = "./vis_logs/Antakya/offset_analysis"  # 结果输出目录
 
     # 创建分析器并运行分析（使用滑动窗口）
     analyzer = InstanceOffsetAnalyzer(

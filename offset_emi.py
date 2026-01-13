@@ -723,10 +723,11 @@ class InstanceWiseAlignmentOptimizer:
 
         # 2. 生成候选初始化偏移
         # 均匀采样num_candidates个点
-        directions = [
-            (dx, dy)
-            for dx, dy in itertools.product([1.0], repeat=2)  # [-1.0, 0.0, 1.0]
-        ]
+        # directions = [
+        #     (dx, dy)
+        #     for dx, dy in itertools.product([1.0], repeat=2)  # [-1.0, 0.0, 1.0]
+        # ]
+        directions = [(1, -1)]
         candidates = [
             (dx * search_range_norm, dy * search_range_norm) for dx, dy in directions
         ]
@@ -1421,13 +1422,13 @@ Total Distance:
         return summary
 
 
-SAVE_FIG_DIR = "./vis_logs/offset_analysis/"
+SAVE_FIG_DIR = "./vis_logs/Antakya/offset_analysis/"
 os.makedirs(SAVE_FIG_DIR, exist_ok=True)
 
 
 def main():
-    image_paths = "../data/segmentation/Turkey/Islahiye/pre/test/images"
-    label_paths = "../data/segmentation/Turkey/Islahiye/pre/test/labels"
+    image_paths = "../data/segmentation/Turkey/Antakya/pre/test/images"
+    label_paths = "../data/segmentation/Turkey/Antakya/pre/test/labels"
     stats = InstanceOffsetStatistics(output_dir=SAVE_FIG_DIR)
     for file_name in os.listdir(image_paths):
         if not file_name.endswith(".png"):

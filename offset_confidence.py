@@ -16,7 +16,7 @@ from typing import List, Tuple, Optional
 from tools.alignment import InstanceWiseAlignmentOptimizer
 
 
-SAVE_FIG_DIR = "./vis_logs/aligner_instance_confidence/"
+SAVE_FIG_DIR = "./vis_logs/Islahiye/aligner_instance_confidence/"
 os.makedirs(SAVE_FIG_DIR, exist_ok=True)
 
 
@@ -141,5 +141,5 @@ def main():
 
 
 if __name__ == "__main__":
-    # main()
-    build_seg_dataset_with_align_conf(root="../data/segmentation/Turkey/Islahiye/pre")
+    main()
+    # build_seg_dataset_with_align_conf(root="../data/segmentation/Turkey/Islahiye/pre")

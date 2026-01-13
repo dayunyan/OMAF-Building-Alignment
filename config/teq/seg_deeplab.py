@@ -13,19 +13,19 @@ max_epoch = 105
 ignore_index = len(CLASSES)
 train_batch_size = 64
 val_batch_size = 16
-lr = 6e-4
+lr = 1e-3
 weight_decay = 0.01
-backbone_lr = 1e-5
+backbone_lr = 1e-4
 backbone_weight_decay = 0.001
 num_classes = len(CLASSES)
 classes = CLASSES
 warmup_epoch = 10
 
 weights_name = "deeplab-r101-512-crop-e105"  # deeplab-w-pred_offsets
-weights_path = "model_weights/offset/{}".format(weights_name)
+weights_path = "model_weights/Antakya/offset/{}".format(weights_name)
 test_weights_name = "deeplab-r101-512-crop-e105"
-log_name = "deeplab-r101-512-crop-e105/{}".format(weights_name)
-visualize_name = "vis_logs/deeplab-r101-512-crop-e105/{}".format(weights_name)
+log_name = "Antakya/deeplab-r101-512-crop-e105/{}".format(weights_name)
+visualize_name = "vis_logs/Antakya/deeplab-r101-512-crop-e105/{}".format(weights_name)
 monitor = "val_F1"
 monitor_mode = "max"
 save_top_k = 1
@@ -73,7 +73,7 @@ loss = Deeplabv3PlusLoss(ignore_index=255)
 # define the dataloader
 
 train_dataset = TeqDataset(
-    data_root="../data/segmentation/Turkey/Islahiye/pre/train",
+    data_root="../data/segmentation/Turkey/Antakya/pre/train",
     mode="train",
     mask_dir="labels",  # pred_offsets
     mosaic_ratio=0.25,
@@ -81,13 +81,13 @@ train_dataset = TeqDataset(
 )
 
 val_dataset = TeqDataset(
-    data_root="../data/segmentation/Turkey/Islahiye/pre/test",
+    data_root="../data/segmentation/Turkey/Antakya/pre/test",
     mode="test",
     transform=val_aug,
     test_gt_dir="gt",
 )
 test_dataset = TeqDataset(
-    data_root="../data/segmentation/Turkey/Islahiye/pre/test",
+    data_root="../data/segmentation/Turkey/Antakya/pre/test",
     mode="test",
     transform=val_aug,
     test_gt_dir="gt",
@@ -99,7 +99,7 @@ train_loader = DataLoader(
     num_workers=0,
     pin_memory=True,
     shuffle=True,
-    drop_last=True,
+    drop_last=False,
 )
 
 val_loader = DataLoader(

@@ -197,7 +197,7 @@ def main():
     data_root = args.data_root
 
     # 假设您的数据根目录结构是 {data_root}/{split_name}/...
-    splits = ["train", "val", "test"]
+    splits = ["test"]
 
     for split in splits:
         split_data_root = os.path.join(data_root, split)

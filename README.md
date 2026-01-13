@@ -361,9 +361,9 @@ python distribution_offset_visual.py # 注意更改代码中的输入路径和�
 
 5. 根据实际偏移的二维高斯分布更新无监督偏移估计的后验概率，将这个概率作为偏移估计的置信度。然后根据无监督偏移估计图和置信度图，构建基于实例的偏移估计标签，保存在数据集与<"images">同级目录<"instances">中。运行：
 ```bash
-python offset_confidence.py # 运行main()，用少量test数据测试效果
+python offset_confidence.py # 运行main()，用少量test数据测试效果，在<"align">中只保存置信度图
 
-python offset_instance.py # 标签保存在instances中
+python offset_instance.py # 标签保存在instances中，先运行check=False，再改成check=True，检查有无错误
 ```
 instances标签格式如下：
 ```python

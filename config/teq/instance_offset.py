@@ -17,10 +17,12 @@ classes = CLASSES
 warmup_epoch = 10
 
 weights_name = "offset-instance-bbox-w-align-conf"
-weights_path = "model_weights/offset-instance/{}".format(weights_name)
-test_weights_name = "offset-instance-bbox-w-align-conf-v2"  # "offset-v5-pretrain-xbd-RSB-predict-object-v1"
+weights_path = "model_weights/Islahiye/offset-instance/{}".format(weights_name)
+test_weights_name = "offset-instance-bbox-w-align-conf"  # "offset-v5-pretrain-xbd-RSB-predict-object-v1"
 log_name = "offset-instance-bbox-w-align-conf/{}".format(weights_name)
-visualize_name = "vis_logs/offset-instance-bbox-w-align-conf/{}".format(weights_name)
+visualize_name = "vis_logs/Islahiye/offset-instance-bbox-w-align-conf/{}".format(
+    weights_name
+)
 monitor = "val_MAE"  # ！！！监控新指标
 monitor_mode = "min"  # ！！！我们希望 MAE 最小化
 save_top_k = 1

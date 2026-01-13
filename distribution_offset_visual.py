@@ -327,7 +327,7 @@ def plot_distributions(
         alpha=0.7,
         density=True,
         color="skyblue",
-        label="File 1",
+        label="GT",
         edgecolor="black",
     )
     axes[0, 0].hist(
@@ -336,7 +336,7 @@ def plot_distributions(
         alpha=0.7,
         density=True,
         color="lightcoral",
-        label="File 2",
+        label="Self-alignment",
         edgecolor="black",
     )
     axes[0, 0].plot(
@@ -344,14 +344,14 @@ def plot_distributions(
         pdf1_dx,
         "b-",
         linewidth=2,
-        label=f"File 1 Fit (μ={mu_dx1:.2f}, σ={sigma_dx1:.2f})",
+        label=f"GT Fit",  # (μ={mu_dx1:.2f}, σ={sigma_dx1:.2f})
     )
     axes[0, 0].plot(
         x_range,
         pdf2_dx,
         "r-",
         linewidth=2,
-        label=f"File 2 Fit (μ={mu_dx2:.2f}, σ={sigma_dx2:.2f})",
+        label=f"Self-alignment Fit",  # (μ={mu_dx2:.2f}, σ={sigma_dx2:.2f})
     )
     axes[0, 0].set_xlabel("X Offset (pixels)")
     axes[0, 0].set_ylabel("Probability Density")
@@ -372,7 +372,7 @@ def plot_distributions(
         alpha=0.7,
         density=True,
         color="skyblue",
-        label="File 1",
+        label="GT",
         edgecolor="black",
     )
     axes[0, 1].hist(
@@ -381,7 +381,7 @@ def plot_distributions(
         alpha=0.7,
         density=True,
         color="lightcoral",
-        label="File 2",
+        label="Self-alignment",
         edgecolor="black",
     )
     axes[0, 1].plot(
@@ -389,14 +389,14 @@ def plot_distributions(
         pdf1_dy,
         "b-",
         linewidth=2,
-        label=f"File 1 Fit (μ={mu_dy1:.2f}, σ={sigma_dy1:.2f})",
+        label=f"GT Fit",  # (μ={mu_dy1:.2f}, σ={sigma_dy1:.2f})
     )
     axes[0, 1].plot(
         y_range,
         pdf2_dy,
         "r-",
         linewidth=2,
-        label=f"File 2 Fit (μ={mu_dy2:.2f}, σ={sigma_dy2:.2f})",
+        label=f"Self-alignment Fit",  # (μ={mu_dy2:.2f}, σ={sigma_dy2:.2f})
     )
     axes[0, 1].set_xlabel("Y Offset (pixels)")
     axes[0, 1].set_ylabel("Probability Density")
@@ -415,7 +415,7 @@ def plot_distributions(
         alpha=0.7,
         density=True,
         color="skyblue",
-        label="File 1",
+        label="GT",
         edgecolor="black",
     )
     axes[0, 2].hist(
@@ -424,7 +424,7 @@ def plot_distributions(
         alpha=0.7,
         density=True,
         color="lightcoral",
-        label="File 2",
+        label="Self-alignment",
         edgecolor="black",
     )
     axes[0, 2].plot(
@@ -432,14 +432,14 @@ def plot_distributions(
         pdf1_dist,
         "b-",
         linewidth=2,
-        label=f"File 1 Fit (μ={mu_dist1:.2f}, σ={sigma_dist1:.2f})",
+        label=f"GT Fit",  # (μ={mu_dist1:.2f}, σ={sigma_dist1:.2f})
     )
     axes[0, 2].plot(
         dist_range,
         pdf2_dist,
         "r-",
         linewidth=2,
-        label=f"File 2 Fit (μ={mu_dist2:.2f}, σ={sigma_dist2:.2f})",
+        label=f"Self-alignment Fit",  # (μ={mu_dist2:.2f}, σ={sigma_dist2:.2f})
     )
     axes[0, 2].set_xlabel("Total Offset Distance (pixels)")
     axes[0, 2].set_ylabel("Probability Density")
@@ -448,8 +448,8 @@ def plot_distributions(
     axes[0, 2].grid(True, alpha=0.3)
 
     # 4. 二维散点图
-    axes[1, 0].scatter(dx1, dy1, alpha=0.5, s=10, color="blue", label="File 1")
-    axes[1, 0].scatter(dx2, dy2, alpha=0.5, s=10, color="red", label="File 2")
+    axes[1, 0].scatter(dx1, dy1, alpha=0.5, s=10, color="blue", label="GT")
+    axes[1, 0].scatter(dx2, dy2, alpha=0.5, s=10, color="red", label="Self-alignment")
     axes[1, 0].axhline(0, color="black", linewidth=0.5)
     axes[1, 0].axvline(0, color="black", linewidth=0.5)
     axes[1, 0].set_xlabel("X Offset (pixels)")
@@ -460,8 +460,8 @@ def plot_distributions(
 
     # 5. 二维核密度估计
     # 使用seaborn绘制核密度估计图
-    data1 = pd.DataFrame({"dx": dx1, "dy": dy1, "source": "File 1"})
-    data2 = pd.DataFrame({"dx": dx2, "dy": dy2, "source": "File 2"})
+    data1 = pd.DataFrame({"dx": dx1, "dy": dy1, "source": "GT"})
+    data2 = pd.DataFrame({"dx": dx2, "dy": dy2, "source": "Self-alignment"})
     data_combined = pd.concat([data1, data2])
 
     sns.kdeplot(
@@ -575,7 +575,7 @@ def plot_2d_contours(
     ax1.scatter(dx1, dy1, alpha=0.3, s=5, color="blue")
     ax1.set_xlabel("X Offset (pixels)")
     ax1.set_ylabel("Y Offset (pixels)")
-    ax1.set_title("File 1: 2D Gaussian Fit")
+    ax1.set_title("GT: 2D Gaussian Fit")
     ax1.grid(True, alpha=0.3)
 
     # 绘制文件2的等高线
@@ -583,7 +583,7 @@ def plot_2d_contours(
     ax2.scatter(dx2, dy2, alpha=0.3, s=5, color="red")
     ax2.set_xlabel("X Offset (pixels)")
     ax2.set_ylabel("Y Offset (pixels)")
-    ax2.set_title("File 2: 2D Gaussian Fit")
+    ax2.set_title("Self-alignment: 2D Gaussian Fit")
     ax2.grid(True, alpha=0.3)
 
     plt.tight_layout()
@@ -597,12 +597,12 @@ def main():
     """
     # 设置文件路径
     file1_path = (
-        "./vis_logs/offset_analysis/instance_offset_details.csv"  # 第一个CSV文件
+        "./vis_logs/Islahiye/offset_analysis/instance_offset_details.csv"  # 第一个CSV文件
     )
     file2_path = (
-        "./vis_logs/offset_analysis/instance_offset_emi_details.csv"  # 第二个CSV文件
+        "./vis_logs/Islahiye/offset_analysis/instance_offset_emi_details.csv"  # 第二个CSV文件
     )
-    output_dir = "./vis_logs/kl_analysis"  # 输出目录
+    output_dir = "./vis_logs/Islahiye/kl_analysis"  # 输出目录
 
     # 检查文件是否存在
     if not Path(file1_path).exists():

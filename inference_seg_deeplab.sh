@@ -24,12 +24,12 @@
 
 python inference_seg_deeplab.py \
 -i ../data/segmentation/Turkey/Islahiye/pre/test/images \
--c config/teq/seg_deeplab.py \
--o fig_results/teq/deeplab-w-pred_offsets \
+-c config/teq/seg_segman.py \
+-o fig_results/teq/segman-base-512-crop-e105 \
  -ph 512 -pw 512 -b 4 -d "building"
 
 # python inference_offset.py \
-# -i ../data/segmentation/Turkey/Islahiye/pre/test/images \
+# -i ../data/segmentation/Turkey/Antakya/pre/test/images \
 # -c config/teq/v4_offset.py \
 # -o fig_results/teq/offset-v4-pretrain-xbd-RSB-predict-object \
 #  -ph 512 -pw 512 -b 4 -d "building"

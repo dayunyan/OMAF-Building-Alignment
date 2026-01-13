@@ -463,6 +463,7 @@ class InstanceWiseAlignmentOptimizer:
 
         # 2. 生成候选初始化偏移（每个实例使用相同的候选点集）
         directions = list(itertools.product([1.0], repeat=2))  # [-1.0, 0.0, 1.0]
+        directions = [(2.0, -2.0)]
         candidates = [
             (dx * search_range_norm, dy * search_range_norm) for dx, dy in directions
         ]
@@ -680,6 +681,7 @@ class InstanceWiseAlignmentOptimizer:
 
         # 3. 生成候选初始化偏移
         directions = list(itertools.product([1.0], repeat=2))  # [-1.0, 0.0, 1.0]
+        directions = [(2.0, -2.0)]
         candidates = [
             (dx * search_range_norm, dy * search_range_norm) for dx, dy in directions
         ]
