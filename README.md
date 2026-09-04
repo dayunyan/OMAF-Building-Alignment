@@ -38,11 +38,13 @@ In this work, we propose a weakly supervised multi-stage alignment framework (**
 If you find our work or this repository useful in your research, please consider citing our paper:
 
 ```bibtex
-@inproceedings{zhang2026revisiting,
-  title={Revisiting the Necessity of Full Accuracy: Weakly Supervised Object-Level Offset Correction for Misaligned Building Labels},
-  author={Zhang, San and Li, Si and Wang, Wu and Zhao, Liu and Qian, Qi and Sun, Ba},
-  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
-  year={2026}
+@InProceedings{Xu_2026_CVPR,
+    author    = {Xu, Junda and Liu, Yanmeng and Zeng, Xiangqiang and Wu, Jinrong and Qu, Ying and Zhang, Libao},
+    title     = {Revisiting the Necessity of Full Accuracy: Weakly Supervised Object-Level Offset Correction for Misaligned Building Labels},
+    booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+    month     = {June},
+    year      = {2026},
+    pages     = {34854-34864}
 }
 ```
 
